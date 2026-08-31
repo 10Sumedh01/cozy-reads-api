@@ -42,3 +42,54 @@ class UserSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "email", "username", "created_at", "updated_at"]
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Used by an already-authenticated user who knows their current password."""
+
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password2 = serializers.CharField(write_only=True, label="Confirm new password")
+
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs.pop("new_password2"):
+            raise serializers.ValidationError({"new_password2": "Passwords do not match."})
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return user
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Step 1 of the forgot-password flow: user submits their email."""
+
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        # Deliberately do NOT raise an error if the email isn't found — see
+        # views.PasswordResetRequestView for why (avoids leaking which emails
+        # are registered).
+        return value
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Step 2: user submits the uid+token from their email, plus a new password."""
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password2 = serializers.CharField(write_only=True, label="Confirm new password")
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs.pop("new_password2"):
+            raise serializers.ValidationError({"new_password2": "Passwords do not match."})
+        return attrs

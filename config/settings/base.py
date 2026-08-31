@@ -143,6 +143,8 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_THROTTLE_RATES": {
         "login": "5/min",
+        "password-reset": "3/min",
+        "password-reset-confirm": "10/min",
         "books-search-external": "30/min",
     },
     "EXCEPTION_HANDLER": "apps.core.exceptions.custom_exception_handler",
