@@ -8,6 +8,6 @@ urlpatterns = [
     path("auth/", include("apps.users.urls")),
     path("books/", include("apps.books.urls")),        # Phase 3
     path("library/", include("apps.library.urls")),    # Phase 3
-    # path("goals/", include("apps.goals.urls")),        # Phase 4
+    path("goals/", include("apps.goals.urls")),        # Phase 4
     # path("stats/", include("apps.stats.urls")),        # Phase 4
 ]
