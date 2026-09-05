@@ -2,7 +2,7 @@
 from rest_framework import permissions, viewsets
 
 from apps.core.permissions import IsOwner
-
+from drf_spectacular.utils import OpenApiExample, extend_schema
 from .models import UserBook
 from .serializers import UserBookSerializer
 from rest_framework import parsers
@@ -19,6 +19,18 @@ class UserBookViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return UserBook.objects.filter(user=self.request.user).select_related("book")
         
+    @extend_schema(
+        summary="Upload an EPUB file for this library entry",
+        description=(
+            "Accepts a multipart .epub file, saves it immediately, and returns 202. "
+            "Page count is calculated asynchronously by a Celery worker — poll "
+            "GET /library/{id}/ afterward to see book.total_pages populated."
+        ),
+        request={"multipart/form-data": {"type": "object", "properties": {
+            "file": {"type": "string", "format": "binary"}
+        }}},
+        responses={202: None},
+    )
     @action(detail=True, methods=["post"], url_path="upload-epub",parser_classes=[parsers.MultiPartParser])
     def upload_epub(self, request, pk=None):
         user_book = self.get_object()  # already scoped to this user + runs IsOwner check

@@ -8,6 +8,8 @@ from rest_framework.views import APIView
 
 from .services import GoogleBooksError, cache_key_for_query, search_google_books
 
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+
 
 from .models import Book
 from .serializers import BookSerializer
@@ -25,6 +27,11 @@ class BookViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
+@extend_schema(
+    summary="Search Google Books",
+    description="Proxies a search to the Google Books API, cached in Redis for 24 hours.",
+    parameters=[OpenApiParameter("q", str, description="Search query", required=True)],
+)
 class BookSearchExternalView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "books-search-external"

@@ -1,6 +1,7 @@
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from apps.core.permissions import IsOwner
 from apps.library.models import StatusChoices, UserBook
@@ -19,6 +20,12 @@ class GoalViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @extend_schema(
+        summary="Get progress toward all of the user's reading goals",
+        responses=OpenApiResponse(
+            description="List of goals with computed completion percentage",
+        ),
+    )
     @action(detail=False, methods=["get"])
     def progress(self, request):
         data = []
