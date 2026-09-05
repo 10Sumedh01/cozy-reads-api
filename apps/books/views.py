@@ -8,7 +8,8 @@ from rest_framework.views import APIView
 
 from .models import Book
 from .serializers import BookSerializer
-from .services import GoogleBooksError, cache_key_for_query, search_google_books
+from .services import (GoogleBooksError, cache_key_for_query,
+                       search_google_books)
 
 
 class BookViewSet(viewsets.ModelViewSet):
