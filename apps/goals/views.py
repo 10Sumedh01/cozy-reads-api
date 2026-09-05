@@ -1,7 +1,7 @@
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from apps.core.permissions import IsOwner
 from apps.library.models import StatusChoices, UserBook
@@ -45,9 +45,19 @@ class GoalViewSet(viewsets.ModelViewSet):
                 )
                 completed = sum(b.current_page for b in books)
 
-            data.append({
-                "id": goal.id, "type": goal.type, "year": goal.year, "month": goal.month,
-                "target": goal.target, "completed": completed,
-                "percent": round(min(completed / goal.target, 1) * 100, 1) if goal.target else 0,
-            })
+            data.append(
+                {
+                    "id": goal.id,
+                    "type": goal.type,
+                    "year": goal.year,
+                    "month": goal.month,
+                    "target": goal.target,
+                    "completed": completed,
+                    "percent": (
+                        round(min(completed / goal.target, 1) * 100, 1)
+                        if goal.target
+                        else 0
+                    ),
+                }
+            )
         return Response(data)

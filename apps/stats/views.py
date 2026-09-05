@@ -14,7 +14,9 @@ class StatsSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        finished = UserBook.objects.filter(user=request.user, status=StatusChoices.FINISHED)
+        finished = UserBook.objects.filter(
+            user=request.user, status=StatusChoices.FINISHED
+        )
 
         total_pages = finished.aggregate(total=Sum("book__total_pages"))["total"] or 0
 
@@ -26,16 +28,20 @@ class StatsSummaryView(APIView):
             .first()
         )
 
-        return Response({
-            "books_read": finished.count(),
-            "total_pages_read": total_pages,
-            "favourite_genre": favourite["book__genre"] if favourite else None,
-            "current_streak_days": self._current_streak(finished),
-        })
+        return Response(
+            {
+                "books_read": finished.count(),
+                "total_pages_read": total_pages,
+                "favourite_genre": favourite["book__genre"] if favourite else None,
+                "current_streak_days": self._current_streak(finished),
+            }
+        )
 
     def _current_streak(self, finished_qs):
         finished_dates = set(
-            finished_qs.exclude(finished_at__isnull=True).values_list("finished_at", flat=True)
+            finished_qs.exclude(finished_at__isnull=True).values_list(
+                "finished_at", flat=True
+            )
         )
         streak, day = 0, timezone.now().date()
         while day in finished_dates:
@@ -56,10 +62,16 @@ class StatsByMonthView(APIView):
             .annotate(books=Count("id"), pages=Sum("book__total_pages"))
             .order_by("month")
         )
-        return Response([
-            {"month": r["month"].strftime("%Y-%m"), "books": r["books"], "pages": r["pages"] or 0}
-            for r in rows
-        ])
+        return Response(
+            [
+                {
+                    "month": r["month"].strftime("%Y-%m"),
+                    "books": r["books"],
+                    "pages": r["pages"] or 0,
+                }
+                for r in rows
+            ]
+        )
 
 
 class StatsByGenreView(APIView):
@@ -73,4 +85,6 @@ class StatsByGenreView(APIView):
             .annotate(books=Count("id"))
             .order_by("-books")
         )
-        return Response([{"genre": r["book__genre"], "books": r["books"]} for r in rows])
+        return Response(
+            [{"genre": r["book__genre"], "books": r["books"]} for r in rows]
+        )

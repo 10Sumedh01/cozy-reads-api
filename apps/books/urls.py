@@ -7,5 +7,9 @@ router = DefaultRouter()
 router.register("", BookViewSet, basename="book")
 
 urlpatterns = [
-    path("search-external/", BookSearchExternalView.as_view(), name="book-search-external"),
+    path(
+        "search-external/",
+        BookSearchExternalView.as_view(),
+        name="book-search-external",
+    ),
 ] + router.urls

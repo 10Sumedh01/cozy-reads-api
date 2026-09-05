@@ -2,7 +2,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,13 +11,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import User
-from .serializers import (
-    ChangePasswordSerializer,
-    PasswordResetConfirmSerializer,
-    PasswordResetRequestSerializer,
-    RegisterSerializer,
-    UserSerializer,
-)
+from .serializers import (ChangePasswordSerializer,
+                          PasswordResetConfirmSerializer,
+                          PasswordResetRequestSerializer, RegisterSerializer,
+                          UserSerializer)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -37,6 +34,14 @@ class LoginView(TokenObtainPairView):
     throttle_scope = "login"
 
 
+@extend_schema(
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {"refresh": {"type": "string"}},
+        }
+    }
+)
 class LogoutView(APIView):
     """POST /auth/logout/ — blacklists the given refresh token so it can't be reused."""
 
@@ -70,18 +75,22 @@ class MeView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
+@extend_schema(request=ChangePasswordSerializer)
 class ChangePasswordView(APIView):
     """POST /auth/change-password/ — logged-in user changes their own password."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+        serializer = ChangePasswordSerializer(
+            data=request.data, context={"request": request}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response({"detail": "Password updated successfully."})
 
 
+@extend_schema(request=PasswordResetRequestSerializer)
 class PasswordResetRequestView(APIView):
     """
     POST /auth/password-reset/ — anyone can call this with an email.
@@ -119,6 +128,7 @@ class PasswordResetRequestView(APIView):
         )
 
 
+@extend_schema(request=PasswordResetConfirmSerializer)
 class PasswordResetConfirmView(APIView):
     """POST /auth/password-reset/confirm/ — sets a new password using the uid+token from email."""
 

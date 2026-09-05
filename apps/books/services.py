@@ -1,7 +1,10 @@
 import hashlib
+import logging
 
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleBooksError(Exception):
@@ -21,6 +24,7 @@ def search_google_books(query, max_results=10):
         )
         response.raise_for_status()
     except requests.RequestException as exc:
+        logger.error("Google Books request failed: %s", exc, exc_info=True)
         raise GoogleBooksError(str(exc)) from exc
 
     data = response.json()
@@ -30,19 +34,21 @@ def search_google_books(query, max_results=10):
         identifiers = {
             i["type"]: i["identifier"] for i in info.get("industryIdentifiers", [])
         }
-        results.append({
-            "google_books_id": item.get("id"),
-            "title": info.get("title", "Untitled"),
-            "author": ", ".join(info.get("authors", [])) or None,
-            "isbn": identifiers.get("ISBN_13") or identifiers.get("ISBN_10"),
-            "description": info.get("description"),
-            "cover_url": info.get("imageLinks", {}).get("thumbnail"),
-            "total_pages": info.get("pageCount"),
-            "genre": (info.get("categories") or [None])[0],
-            "publisher": info.get("publisher"),
-            "published_date": info.get("publishedDate"),
-            "language": info.get("language", "en"),
-        })
+        results.append(
+            {
+                "google_books_id": item.get("id"),
+                "title": info.get("title", "Untitled"),
+                "author": ", ".join(info.get("authors", [])) or None,
+                "isbn": identifiers.get("ISBN_13") or identifiers.get("ISBN_10"),
+                "description": info.get("description"),
+                "cover_url": info.get("imageLinks", {}).get("thumbnail"),
+                "total_pages": info.get("pageCount"),
+                "genre": (info.get("categories") or [None])[0],
+                "publisher": info.get("publisher"),
+                "published_date": info.get("publishedDate"),
+                "language": info.get("language", "en"),
+            }
+        )
     return results
 
 

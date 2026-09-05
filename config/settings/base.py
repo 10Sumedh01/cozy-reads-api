@@ -2,6 +2,7 @@
 Base settings — shared across local, test, and production.
 Nothing environment-specific lives here except sane defaults.
 """
+
 from datetime import timedelta
 from pathlib import Path
 
@@ -88,7 +89,9 @@ ASGI_APPLICATION = "config.asgi.application"
 # Database (overridden per-environment, default here for convenience)
 # ---------------------------------------------------------------------------
 DATABASES = {
-    "default": env.db("DATABASE_URL", default="postgres://cozy:cozy@localhost:5432/cozy_reads"),
+    "default": env.db(
+        "DATABASE_URL", default="postgres://cozy:cozy@localhost:5432/cozy_reads"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -97,7 +100,9 @@ DATABASES = {
 AUTH_USER_MODEL = "users.User"
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -128,9 +133,7 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
-    ),
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_FILTER_BACKENDS": (
@@ -138,9 +141,7 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ),
-    "DEFAULT_THROTTLE_CLASSES": (
-        "rest_framework.throttling.ScopedRateThrottle",
-    ),
+    "DEFAULT_THROTTLE_CLASSES": ("rest_framework.throttling.ScopedRateThrottle",),
     "DEFAULT_THROTTLE_RATES": {
         "login": "5/min",
         "password-reset": "3/min",
@@ -172,7 +173,9 @@ SPECTACULAR_SETTINGS = {
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"])
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"]
+)
 
 # ---------------------------------------------------------------------------
 # Celery

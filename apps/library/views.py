@@ -1,15 +1,15 @@
 # flake8:noqa
-from rest_framework import permissions, viewsets
-
-from apps.core.permissions import IsOwner
 from drf_spectacular.utils import OpenApiExample, extend_schema
-from .models import UserBook
-from .serializers import UserBookSerializer
-from rest_framework import parsers
+from rest_framework import parsers, permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.permissions import IsOwner
 from apps.epub.tasks import parse_epub_pages
+
+from .models import UserBook
+from .serializers import UserBookSerializer
+
 
 class UserBookViewSet(viewsets.ModelViewSet):
     serializer_class = UserBookSerializer
@@ -18,7 +18,7 @@ class UserBookViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return UserBook.objects.filter(user=self.request.user).select_related("book")
-        
+
     @extend_schema(
         summary="Upload an EPUB file for this library entry",
         description=(
@@ -26,14 +26,24 @@ class UserBookViewSet(viewsets.ModelViewSet):
             "Page count is calculated asynchronously by a Celery worker — poll "
             "GET /library/{id}/ afterward to see book.total_pages populated."
         ),
-        request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"}
-        }}},
+        request={
+            "multipart/form-data": {
+                "type": "object",
+                "properties": {"file": {"type": "string", "format": "binary"}},
+            }
+        },
         responses={202: None},
     )
-    @action(detail=True, methods=["post"], url_path="upload-epub",parser_classes=[parsers.MultiPartParser])
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload-epub",
+        parser_classes=[parsers.MultiPartParser],
+    )
     def upload_epub(self, request, pk=None):
-        user_book = self.get_object()  # already scoped to this user + runs IsOwner check
+        user_book = (
+            self.get_object()
+        )  # already scoped to this user + runs IsOwner check
         file_obj = request.FILES.get("file")
 
         if not file_obj:
@@ -50,6 +60,9 @@ class UserBookViewSet(viewsets.ModelViewSet):
         parse_epub_pages.delay(user_book.id)
 
         return Response(
-            {"detail": "Upload accepted, processing page count.", "status": "processing"},
+            {
+                "detail": "Upload accepted, processing page count.",
+                "status": "processing",
+            },
             status=202,
         )

@@ -10,20 +10,37 @@ class UserBookSerializer(serializers.ModelSerializer):
     book = BookSerializer(read_only=True)
     book_isbn = serializers.CharField(write_only=True, required=False, allow_blank=True)
     book_title = serializers.CharField(write_only=True, required=False)
-    book_author = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    book_author = serializers.CharField(
+        write_only=True, required=False, allow_blank=True
+    )
 
     class Meta:
         model = UserBook
         fields = [
-            "id", "book", "book_isbn", "book_title", "book_author",
-            "status", "book_type", "current_page", "current_position",
-            "rating", "personal_notes", "started_at", "finished_at",
-            "created_at", "updated_at",
+            "id",
+            "book",
+            "book_isbn",
+            "book_title",
+            "book_author",
+            "status",
+            "book_type",
+            "current_page",
+            "current_position",
+            "rating",
+            "personal_notes",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate(self, attrs):
-        if self.instance is None and not attrs.get("book_title") and not attrs.get("book_isbn"):
+        if (
+            self.instance is None
+            and not attrs.get("book_title")
+            and not attrs.get("book_isbn")
+        ):
             raise serializers.ValidationError(
                 "Provide at least book_title to add a book to your library."
             )

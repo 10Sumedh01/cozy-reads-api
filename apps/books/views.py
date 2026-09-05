@@ -1,18 +1,15 @@
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import permissions, viewsets
-from rest_framework.filters import SearchFilter
 from django.core.cache import cache
-from rest_framework import status
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import permissions, status, viewsets
+from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .services import GoogleBooksError, cache_key_for_query, search_google_books
-
-from drf_spectacular.utils import extend_schema, OpenApiParameter
-
-
 from .models import Book
 from .serializers import BookSerializer
+from .services import (GoogleBooksError, cache_key_for_query,
+                       search_google_books)
 
 
 class BookViewSet(viewsets.ModelViewSet):
@@ -27,13 +24,14 @@ class BookViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
+
 @extend_schema(
     summary="Search Google Books",
     description="Proxies a search to the Google Books API, cached in Redis for 24 hours.",
     parameters=[OpenApiParameter("q", str, description="Search query", required=True)],
 )
 class BookSearchExternalView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated()]
     throttle_scope = "books-search-external"
 
     def get(self, request):
@@ -53,9 +51,13 @@ class BookSearchExternalView(APIView):
             results = search_google_books(query)
         except GoogleBooksError:
             return Response(
-                {"detail": "Google Books is temporarily unavailable. Try again shortly."},
+                {
+                    "detail": "Google Books is temporarily unavailable. Try again shortly."
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        cache.set(cache_key, results, timeout=60 * 60 * 24)  # 24h, per your caching strategy doc
+        cache.set(
+            cache_key, results, timeout=60 * 60 * 24
+        )  # 24h, per your caching strategy doc
         return Response({"results": results, "cached": False})

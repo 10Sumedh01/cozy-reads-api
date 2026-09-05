@@ -15,9 +15,11 @@ def custom_exception_handler(exc, context):
     if response is not None:
         error_payload = {
             "error": {
-                "detail": response.data.get("detail", response.data)
-                if isinstance(response.data, dict)
-                else response.data,
+                "detail": (
+                    response.data.get("detail", response.data)
+                    if isinstance(response.data, dict)
+                    else response.data
+                ),
                 "status_code": response.status_code,
             }
         }

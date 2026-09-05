@@ -48,7 +48,9 @@ class ChangePasswordSerializer(serializers.Serializer):
     """Used by an already-authenticated user who knows their current password."""
 
     old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password = serializers.CharField(
+        write_only=True, validators=[validate_password]
+    )
     new_password2 = serializers.CharField(write_only=True, label="Confirm new password")
 
     def validate_old_password(self, value):
@@ -59,7 +61,9 @@ class ChangePasswordSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs.pop("new_password2"):
-            raise serializers.ValidationError({"new_password2": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"new_password2": "Passwords do not match."}
+            )
         return attrs
 
     def save(self, **kwargs):
@@ -86,10 +90,14 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     uid = serializers.CharField()
     token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password = serializers.CharField(
+        write_only=True, validators=[validate_password]
+    )
     new_password2 = serializers.CharField(write_only=True, label="Confirm new password")
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs.pop("new_password2"):
-            raise serializers.ValidationError({"new_password2": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"new_password2": "Passwords do not match."}
+            )
         return attrs
