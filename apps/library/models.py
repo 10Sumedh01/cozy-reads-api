@@ -19,7 +19,7 @@ class UserBook(BaseModel):
         "users.User", on_delete=models.CASCADE, related_name="library"
     )
     book = models.ForeignKey(
-        "books.Book", on_delete=models.CASCADE, related_name="user_entries"
+        "books.Book", on_delete=models.PROTECT, related_name="user_entries"
     )
     status = models.CharField(
         max_length=20, choices=StatusChoices.choices, default=StatusChoices.WANT_TO_READ

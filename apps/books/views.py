@@ -21,7 +21,9 @@ class BookViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
             return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated()]
+        if self.action in ["update", "partial_update", "destroy"]:
+            return [permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated()]  # handles create
 
 
 @extend_schema(
@@ -30,7 +32,7 @@ class BookViewSet(viewsets.ModelViewSet):
     parameters=[OpenApiParameter("q", str, description="Search query", required=True)],
 )
 class BookSearchExternalView(APIView):
-    permission_classes = [permissions.IsAuthenticated()]
+    permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "books-search-external"
 
     def get(self, request):
