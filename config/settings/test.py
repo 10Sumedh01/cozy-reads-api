@@ -1,3 +1,4 @@
+# flake8:noqa
 from .base import *  # noqa
 
 DEBUG = False
@@ -19,3 +20,4 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
 MEDIA_ROOT = BASE_DIR / "test_media"  # noqa: F405
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
