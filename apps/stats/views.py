@@ -7,7 +7,7 @@ from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.library.models import StatusChoices, UserBook
+from apps.library.models import ReadingSession, StatusChoices, UserBook
 
 
 class StatsSummaryView(APIView):
@@ -38,15 +38,23 @@ class StatsSummaryView(APIView):
         )
 
     def _current_streak(self, finished_qs):
-        finished_dates = set(
-            finished_qs.exclude(finished_at__isnull=True).values_list(
-                "finished_at", flat=True
-            )
+        session_dates = set(
+            ReadingSession.objects.filter(
+                user_book__user=self.request.user
+            ).values_list("created_at__date", flat=True)
         )
-        streak, day = 0, timezone.now().date()
-        while day in finished_dates:
+        streak = 0
+        day = timezone.now().date()
+
+        # Grace period: if no session logged yet today but there was one
+        # yesterday, don't show the streak as broken until the day actually ends.
+        if day not in session_dates and (day - timedelta(days=1)) in session_dates:
+            day -= timedelta(days=1)
+
+        while day in session_dates:
             streak += 1
             day -= timedelta(days=1)
+
         return streak
 
 
