@@ -43,3 +43,17 @@ class UserBook(BaseModel):
 
     def __str__(self):
         return f"{self.user} — {self.book}"
+
+
+class ReadingSession(BaseModel):
+    """One incremental reading update — created every time current_page advances."""
+
+    user_book = models.ForeignKey(
+        UserBook, on_delete=models.CASCADE, related_name="sessions"
+    )
+    pages_read = models.PositiveIntegerField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user_book", "created_at"]),
+        ]
