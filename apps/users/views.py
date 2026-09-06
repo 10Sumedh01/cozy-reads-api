@@ -73,6 +73,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = UserSerializer
+    http_method_names = ["get", "patch", "head", "options"]
 
     def get_object(self):
         return self.request.user
