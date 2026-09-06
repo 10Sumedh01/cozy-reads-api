@@ -11,8 +11,15 @@ class GoogleBooksError(Exception):
     """Raised when the Google Books API call fails or returns something we can't use."""
 
 
-def search_google_books(query, max_results=10):
-    params = {"q": query, "maxResults": max_results}
+def search_google_books(query, max_results=10, search_type="title"):
+    qualifiers = {
+        "isbn": f"isbn:{query}",
+        "author": f"inauthor:{query}",
+        "title": query,
+    }
+    google_query = qualifiers.get(search_type, query)
+
+    params = {"q": google_query, "maxResults": max_results}
     if settings.GOOGLE_BOOKS_API_KEY:
         params["key"] = settings.GOOGLE_BOOKS_API_KEY
 
@@ -52,6 +59,6 @@ def search_google_books(query, max_results=10):
     return results
 
 
-def cache_key_for_query(query):
-    digest = hashlib.md5(query.strip().lower().encode()).hexdigest()
+def cache_key_for_query(query, search_type="title"):
+    digest = hashlib.md5(f"{search_type}:{query}".strip().lower().encode()).hexdigest()
     return f"google_books:search:{digest}"

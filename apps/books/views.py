@@ -28,8 +28,19 @@ class BookViewSet(viewsets.ModelViewSet):
 
 @extend_schema(
     summary="Search Google Books",
-    description="Proxies a search to the Google Books API, cached in Redis for 24 hours.",
-    parameters=[OpenApiParameter("q", str, description="Search query", required=True)],
+    description=(
+        "Proxies a search to the Google Books API, cached in Redis for 24 hours. "
+        "Requires authentication — include a valid Bearer access token."
+    ),
+    parameters=[
+        OpenApiParameter("q", str, description="Search query", required=True),
+        OpenApiParameter(
+            "type",
+            str,
+            required=False,
+            description="What 'q' represents: title (default), author, or isbn.",
+        ),
+    ],
 )
 class BookSearchExternalView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -37,19 +48,26 @@ class BookSearchExternalView(APIView):
 
     def get(self, request):
         query = request.query_params.get("q", "").strip()
+        search_type = request.query_params.get("type", "title").strip().lower()
+
         if not query:
             return Response(
                 {"detail": "Query parameter 'q' is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if search_type not in {"title", "author", "isbn"}:
+            return Response(
+                {"detail": "'type' must be one of: title, author, isbn."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        cache_key = cache_key_for_query(query)
+        cache_key = cache_key_for_query(query, search_type)
         cached = cache.get(cache_key)
         if cached is not None:
             return Response({"results": cached, "cached": True})
 
         try:
-            results = search_google_books(query)
+            results = search_google_books(query, search_type=search_type)
         except GoogleBooksError:
             return Response(
                 {
@@ -58,7 +76,5 @@ class BookSearchExternalView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        cache.set(
-            cache_key, results, timeout=60 * 60 * 24
-        )  # 24h, per your caching strategy doc
+        cache.set(cache_key, results, timeout=60 * 60 * 24)
         return Response({"results": results, "cached": False})
