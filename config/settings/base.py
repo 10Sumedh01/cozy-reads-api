@@ -194,6 +194,14 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": env("REDIS_URL", default="redis://localhost:6379/1"),
+        "KEY_PREFIX": "cozyreads",
+        "TIMEOUT": 300,
+        "OPTIONS": {
+            "max_connections": 50,
+            "retry_on_timeout": True,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        },
     }
 }
 
