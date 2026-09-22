@@ -25,3 +25,14 @@ def parse_epub_pages(self, user_book_id):
 
     user_book.book.total_pages = estimated_pages
     user_book.book.save(update_fields=["total_pages"])
+
+    # Invalidate stats for all users who have this book in their library
+    from apps.core.cache import invalidate_user_stats_cache
+
+    affected_user_ids = set(
+        UserBook.objects.filter(book_id=user_book.book_id).values_list(
+            "user_id", flat=True
+        )
+    )
+    for uid in affected_user_ids:
+        invalidate_user_stats_cache(uid)

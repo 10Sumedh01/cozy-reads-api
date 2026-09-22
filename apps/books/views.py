@@ -6,9 +6,11 @@ from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.cache import TTL_GOOGLE_BOOKS_SEARCH, google_books_search_key
+
 from .models import Book
 from .serializers import BookSerializer
-from .services import GoogleBooksError, cache_key_for_query, search_google_books
+from .services import GoogleBooksError, search_google_books
 
 
 class BookViewSet(viewsets.ModelViewSet):
@@ -61,7 +63,7 @@ class BookSearchExternalView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        cache_key = cache_key_for_query(query, search_type)
+        cache_key = google_books_search_key(query, search_type)
         cached = cache.get(cache_key)
         if cached is not None:
             return Response({"results": cached, "cached": True})
@@ -76,5 +78,5 @@ class BookSearchExternalView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        cache.set(cache_key, results, timeout=60 * 60 * 24)
+        cache.set(cache_key, results, timeout=TTL_GOOGLE_BOOKS_SEARCH)
         return Response({"results": results, "cached": False})

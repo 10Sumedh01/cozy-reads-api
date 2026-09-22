@@ -59,6 +59,7 @@ def search_google_books(query, max_results=10, search_type="title"):
     return results
 
 
-def cache_key_for_query(query, search_type="title"):
-    digest = hashlib.md5(f"{search_type}:{query}".strip().lower().encode()).hexdigest()
-    return f"google_books:search:{digest}"
+from apps.core.cache import google_books_search_key
+
+# Backwards compatibility alias
+cache_key_for_query = google_books_search_key
