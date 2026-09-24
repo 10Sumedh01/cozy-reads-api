@@ -1,8 +1,9 @@
-import hashlib
 import logging
 
 import requests
 from django.conf import settings
+
+from apps.core.cache import google_books_search_key
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,6 @@ def search_google_books(query, max_results=10, search_type="title"):
         )
     return results
 
-
-from apps.core.cache import google_books_search_key
 
 # Backwards compatibility alias
 cache_key_for_query = google_books_search_key
