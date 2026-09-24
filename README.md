@@ -11,6 +11,7 @@
    - [Architectural Patterns](#architectural-patterns)
    - [Request & Response Lifecycle](#request--response-lifecycle)
    - [Asynchronous Task Lifecycle](#asynchronous-task-lifecycle)
+   - [Caching Architecture & Invalidation Strategy](#caching-architecture--invalidation-strategy)
 2. [Project & Directory Structure](#2-project--directory-structure)
 3. [Applications & Domain Modules](#3-applications--domain-modules)
    - [apps.core](#appscore)
@@ -97,6 +98,7 @@ flowchart TD
     CeleryBeat -->|Schedule Heartbeat| Redis
     CeleryWorker -->|Update Total Pages| Postgres
     CeleryWorker -->|Read EPUB File| MediaStorage
+    CeleryWorker -->|Invalidate User Stats Cache (DB 1)| Redis
 
     Views -->|File Uploads / Avatars| MediaStorage
     Views -->|Volume Search Proxy| GoogleBooks
@@ -111,7 +113,8 @@ flowchart TD
 - **Layered Multi-Environment Settings**: Split Django configuration (`base.py`, `local.py`, `production.py`, `test.py`) using `django-environ` for 12-factor application design.
 - **Envelope Error Handling**: DRF default error formatting is intercepted by a unified handler (`apps.core.exceptions.custom_exception_handler`), guaranteeing that any 4xx/5xx payload follows the `{ "error": { "detail": ..., "status_code": ... } }` schema.
 - **Asynchronous Offloading**: Compute-heavy or blocking operations (such as EPUB parsing and token/email operations) are delegated to Celery workers using Redis as the message broker.
-- **Proxy Caching**: Google Books search queries are hashed via MD5 and stored in Redis with a 24-hour TTL, mitigating third-party API rate limits and reducing external latency.
+- **Centralized Multi-Tier Caching & Invalidation**: Standardized caching module (`apps.core.cache`) with explicit TTL constants and predictable key formatting. External Google Books searches are cached for 24 hours (`google_books:search:{md5}`); compute-heavy analytics (`/stats/summary/`, `/stats/by-month/`, `/stats/by-genre/`) and goal progress metrics (`/goals/progress/`) are cached in Redis for 1 hour with user-scoped keys (`user:{id}:stats:*`, `user:{id}:goals:progress`). Cache invalidation is automated via Django model signals (`post_save`, `post_delete` on `UserBook`, `ReadingSession`, `ReadingGoal`) and Celery background workers.
+- **Connection-Pooled Redis Cache**: Redis caching (`config/settings/base.py`) utilizes Django's native Redis cache backend configured with connection pooling (`max_connections: 50`), socket timeouts (5s), auto-retry on timeout, and unified namespace key prefixing (`cozyreads:`).
 
 ### Request & Response Lifecycle
 
@@ -137,11 +140,11 @@ sequenceDiagram
         Ser-->>View: raise ValidationError
         View-->>Client: 400 Bad Request (Formatted Error Envelope)
     end
-    alt Read Cacheable Data (e.g. Google Books Search)
-        View->>Cache: GET cache_key
+    alt Read Cacheable Data (Google Books Search, Reading Stats, Goal Progress)
+        View->>Cache: GET cache_key (or cache.get_or_set)
         opt Cache Hit
             Cache-->>View: Cached Data
-            View-->>Client: 200 OK (cached: true)
+            View-->>Client: 200 OK (cached: true / serialized JSON)
         end
     end
     View->>DB: Query / Mutate Models (ORM)
@@ -162,6 +165,7 @@ sequenceDiagram
     participant Redis as Redis (Broker DB 0)
     participant Worker as Celery Worker
     participant DB as PostgreSQL
+    participant Cache as Redis Cache (DB 1)
 
     User->>Web: POST /api/v1/library/{id}/upload-epub/ (multipart/form-data)
     Web->>Web: Validate extension (.epub) & size (<= 50MB)
@@ -175,8 +179,71 @@ sequenceDiagram
     Worker->>FS: Read EPUB archive & inspect document items
     Worker->>Worker: Parse XHTML items & estimate page count (words / 250)
     Worker->>DB: UPDATE books_book SET total_pages = estimated_pages
+    Worker->>DB: Query affected user_ids with book in library
+    Worker->>Cache: Invalidate user stats cache for affected users (invalidate_user_stats_cache)
     Worker-->>Redis: Mark task complete
 ```
+
+### Caching Architecture & Invalidation Strategy
+
+The Cozy Reads API employs a centralized, signal-driven Redis caching layer defined in `apps.core.cache`. This architecture guarantees high throughput and low latency on compute-intensive analytics and external searches while ensuring real-time data consistency across all user mutations.
+
+```mermaid
+flowchart TD
+    subgraph Triggers["Data Mutation Triggers"]
+        T1["UserBook (post_save / post_delete)"]
+        T2["ReadingSession (post_save / post_delete)"]
+        T3["ReadingGoal (post_save / post_delete)"]
+        T4["Celery Worker (EPUB Parsing Complete)"]
+    end
+
+    subgraph Handlers["Signal Receivers & Tasks"]
+        H1["apps.library.signals\non_userbook_change"]
+        H2["apps.library.signals\non_reading_session_change"]
+        H3["apps.goals.signals\non_goal_change"]
+        H4["apps.epub.tasks\nparse_epub_pages"]
+    end
+
+    subgraph Helpers["apps.core.cache Helpers"]
+        I1["invalidate_user_stats_cache(user_id)\n[deletes summary, by-month, by-genre, goals]"]
+        I2["invalidate_user_goals_cache(user_id)\n[deletes goals progress]"]
+    end
+
+    subgraph RedisKeys["Redis 7 (DB 1 | Prefix: cozyreads:)"]
+        K1[("user:{id}:stats:summary\nTTL: 1 hour")]
+        K2[("user:{id}:stats:by-month\nTTL: 1 hour")]
+        K3[("user:{id}:stats:by-genre\nTTL: 1 hour")]
+        K4[("user:{id}:goals:progress\nTTL: 1 hour")]
+        K5[("google_books:search:{md5}\nTTL: 24 hours")]
+    end
+
+    T1 --> H1
+    T2 --> H2
+    T3 --> H3
+    T4 --> H4
+
+    H1 -->|user_id| I1
+    H2 -->|user_id| I1
+    H3 -->|user_id| I2
+    H4 -->|all affected user_ids| I1
+
+    I1 -->|cache.delete_many| K1
+    I1 -->|cache.delete_many| K2
+    I1 -->|cache.delete_many| K3
+    I1 -->|cache.delete_many| K4
+    I2 -->|cache.delete| K4
+```
+
+#### Cache Key Specifications & Invalidation Policies
+
+| Cache Key Pattern | TTL | Generator Function | Invalidation Triggers | Scope / Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `user:{id}:stats:summary` | 1 hour (`TTL_STATS_SUMMARY`) | `user_stats_summary_key(user_id)` | `UserBook` or `ReadingSession` change; EPUB word count update | Caches aggregate statistics (books read, total pages read, streak, favorite genre) for `/api/v1/stats/summary/`. |
+| `user:{id}:stats:by-month` | 1 hour (`TTL_STATS_BY_MONTH`) | `user_stats_by_month_key(user_id)` | `UserBook` or `ReadingSession` change; EPUB word count update | Caches monthly reading time-series aggregation for `/api/v1/stats/by-month/`. |
+| `user:{id}:stats:by-genre` | 1 hour (`TTL_STATS_BY_GENRE`) | `user_stats_by_genre_key(user_id)` | `UserBook` or `ReadingSession` change; EPUB word count update | Caches genre completion rankings for `/api/v1/stats/by-genre/`. |
+| `user:{id}:goals:progress` | 1 hour (`TTL_GOALS_PROGRESS`) | `user_goals_progress_key(user_id)` | `ReadingGoal`, `UserBook`, or `ReadingSession` change | Caches calculated reading goal progress percentages for `/api/v1/goals/progress/`. |
+| `google_books:search:{md5}` | 24 hours (`TTL_GOOGLE_BOOKS_SEARCH`) | `google_books_search_key(query, search_type)` | Natural 24-hour expiration | Caches external Google Books Volume API query results indexed by MD5 of `search_type:query`. |
+| `book:{id}:detail` | 24 hours (`TTL_BOOK_DETAIL`) | `book_detail_key(book_id)` | `invalidate_book_cache(book_id)` | Reserved for master book catalog detail caching. |
 
 ---
 
@@ -216,6 +283,7 @@ cozy-reads-api/
 ├── apps/                              # Modular Domain Applications
 │   ├── core/                          # Common domain utilities, models, permissions & handlers
 │   │   ├── apps.py                    # Core application config
+│   │   ├── cache.py                   # Centralized Redis cache keys, TTL constants & invalidation helpers
 │   │   ├── models.py                  # BaseModel (abstract: created_at, updated_at)
 │   │   ├── permissions.py             # IsOwner object-level authorization permission
 │   │   ├── exceptions.py              # Custom DRF exception handler (consistent error envelope)
@@ -235,35 +303,37 @@ cozy-reads-api/
 │   │   ├── apps.py                    # Books application config
 │   │   ├── models.py                  # Book entity (ISBN, title, author, total_pages, cover)
 │   │   ├── serializers.py             # BookSerializer
-│   │   ├── services.py                # Google Books API client & Redis cache key generator
+│   │   ├── services.py                # Google Books API client (uses centralized cache keys)
 │   │   ├── urls.py                    # /api/v1/books/ routes & DefaultRouter
 │   │   └── views.py                   # BookViewSet & BookSearchExternalView
 │   │
 │   ├── library/                       # User Personal Library & Reading Progress
 │   │   ├── admin.py                   # UserBookAdmin with list filters
-│   │   ├── apps.py                    # Library application config
+│   │   ├── apps.py                    # Library application config (registers signal handlers)
 │   │   ├── models.py                  # UserBook & ReadingSession models
 │   │   ├── serializers.py             # UserBookSerializer & UpdateProgressSerializer
+│   │   ├── signals.py                 # Post-save/delete signal handlers invalidating user stats cache
 │   │   ├── urls.py                    # /api/v1/library/ routes
 │   │   ├── views.py                   # UserBookViewSet (upload_epub, progress actions)
 │   │   └── tests/                     # Library factories
 │   │
 │   ├── epub/                          # EPUB File Parsing & Background Processing
 │   │   ├── apps.py                    # Epub application config
-│   │   └── tasks.py                   # Celery task parse_epub_pages (word count & page estimate)
+│   │   └── tasks.py                   # Celery task parse_epub_pages (word count, page estimate & multi-user cache invalidation)
 │   │
 │   ├── goals/                         # Reading Goals & Progress Engine
 │   │   ├── admin.py                   # ReadingGoalAdmin
-│   │   ├── apps.py                    # Goals application config
+│   │   ├── apps.py                    # Goals application config (registers signal handlers)
 │   │   ├── models.py                  # ReadingGoal model (annual_books, monthly_pages)
 │   │   ├── serializers.py             # ReadingGoalSerializer with conditional validation
+│   │   ├── signals.py                 # Post-save/delete signal handlers invalidating user goals cache
 │   │   ├── urls.py                    # /api/v1/goals/ routes
-│   │   └── views.py                   # GoalViewSet & progress calculation action
+│   │   └── views.py                   # GoalViewSet & cached progress calculation action
 │   │
 │   └── stats/                         # Reading Analytics & Visualization Data
 │       ├── apps.py                    # Stats application config
 │       ├── urls.py                    # /api/v1/stats/ routes
-│       └── views.py                   # Summary, ByMonth, ByGenre aggregation views
+│       └── views.py                   # Cached Summary, ByMonth, ByGenre aggregation views
 │
 └── .github/workflows/
     └── ci.yml                         # Automated GitHub Actions (Lint, Test, Docker Build)
@@ -286,6 +356,10 @@ cozy-reads-api/
   }
   ```
 - **`health_check`**: Direct Django view at `/health/` executing raw SQL (`SELECT 1`) and cache operations (`cache.set`/`cache.get`) to provide instant health state (HTTP 200 vs 503) for Docker, Kubernetes, and uptime probes.
+- **`cache.py` (Centralized Cache Infrastructure)**: Standardized Redis caching engine declaring TTL constants, key formatting functions, and invalidation helpers:
+  - **TTL Constants**: `TTL_STATS_SUMMARY` (3600s / 1h), `TTL_STATS_BY_MONTH` (3600s / 1h), `TTL_STATS_BY_GENRE` (3600s / 1h), `TTL_GOALS_PROGRESS` (3600s / 1h), `TTL_GOOGLE_BOOKS_SEARCH` (86400s / 24h), `TTL_BOOK_DETAIL` (86400s / 24h).
+  - **Key Generators**: `google_books_search_key(query, search_type)`, `user_goals_progress_key(user_id)`, `user_stats_summary_key(user_id)`, `user_stats_by_month_key(user_id)`, `user_stats_by_genre_key(user_id)`, `book_detail_key(book_id)`.
+  - **Invalidators**: `invalidate_user_stats_cache(user_id)` (clears summary, by-month, by-genre, and goals progress via `cache.delete_many`), `invalidate_user_goals_cache(user_id)`, and `invalidate_book_cache(book_id)`.
 
 ### `apps.users`
 - Implements a custom user model inheriting from Django's `AbstractUser`.
@@ -303,9 +377,9 @@ cozy-reads-api/
 - Centralized, de-duplicated book catalog shared across all users.
 - Attributes: `title`, `author`, `isbn` (indexed, unique), `description`, `cover_url`, `total_pages`, `genre`, `publisher`, `published_date`, `language`.
 - Permission model: Public read access (`AllowAny` for list and retrieve), authenticated creation (`IsAuthenticated`), and staff-only mutations (`IsAdminUser` for update and delete).
-- **Google Books Integration** (`services.py`):
+- **Google Books Integration** (`services.py` & `views.py`):
   - Queries Google Books Volume API with optional qualifiers (`title`, `author`, `isbn`).
-  - Caches formatted search results in Redis with MD5 digest keys (`google_books:search:{md5}`) for 24 hours.
+  - Caches formatted search results in Redis with MD5 digest keys (`google_books:search:{md5}`) for 24 hours (`TTL_GOOGLE_BOOKS_SEARCH`) using centralized generators in `apps.core.cache`.
   - Throttled at `30/min` per authenticated user.
 
 ### `apps.library`
@@ -320,6 +394,9 @@ cozy-reads-api/
   - Incremental page updates create immutable `ReadingSession` records containing `pages_read` (the positive delta).
   - Supports bookmark tracking via `current_position` (string bookmark or EPUB CFI).
 - File Storage: EPUB files are uploaded to `epubs/%Y/%m/` and trigger asynchronous parsing.
+- **Signal-Driven Invalidation** (`signals.py`):
+  - Model signals (`post_save` and `post_delete` on `UserBook` and `ReadingSession`) automatically trigger `invalidate_user_stats_cache(user_id)`.
+  - Any changes to library entries, reading progress, or sessions instantly purge cached user statistics and goal progress to prevent stale analytics. Registered in `LibraryConfig.ready()`.
 
 ### `apps.epub`
 - Dedicated asynchronous worker module.
@@ -328,6 +405,7 @@ cozy-reads-api/
   - Iterates over document items (ITEM_DOCUMENT / type 9).
   - Calculates the total word count and estimates standard pages (~250 words per page).
   - Updates `Book.total_pages` in the database.
+  - Identifies all users with this book in their library (`UserBook.objects.filter(book_id=user_book.book_id)`) and executes `invalidate_user_stats_cache(uid)` for each affected user so aggregate page counts and statistics update accurately.
 
 ### `apps.goals`
 - Enables users to set personal reading targets (`ReadingGoal`).
@@ -338,12 +416,16 @@ cozy-reads-api/
   - For `annual_books`: Counts `UserBook` entries marked `finished` in that year.
   - For `monthly_pages`: Sums all `ReadingSession.pages_read` logged within that specific month.
   - Computes exact completion percentages (clamped to 100.0%).
+  - **Caching**: Results are cached in Redis for 1 hour (`TTL_GOALS_PROGRESS`) under `user:{id}:goals:progress` via `cache.get_or_set`.
+- **Signal-Driven Invalidation** (`signals.py`):
+  - Connects `post_save` and `post_delete` signal handlers on `ReadingGoal` to automatically execute `invalidate_user_goals_cache(instance.user_id)`. Registered in `GoalsConfig.ready()`.
 
 ### `apps.stats`
-- Analytics and reporting service:
-  - **Summary (`/stats/summary/`)**: Total books read, total pages read, favorite genre, and current reading streak in days.
-  - **Monthly Breakdown (`/stats/by-month/`)**: Chronological aggregate of books finished and pages read grouped by month (`TruncMonth`).
-  - **Genre Distribution (`/stats/by-genre/`)**: Book completion count aggregated by genre.
+- Analytics and reporting service with full Redis caching:
+  - **Summary (`/stats/summary/`)**: Total books read, total pages read, favorite genre, and current reading streak in days (calculated from consecutive reading session dates with yesterday grace period). Cached for 1 hour via `user_stats_summary_key(user_id)`.
+  - **Monthly Breakdown (`/stats/by-month/`)**: Chronological aggregate of books finished and pages read grouped by month (`TruncMonth`). Cached for 1 hour via `user_stats_by_month_key(user_id)`.
+  - **Genre Distribution (`/stats/by-genre/`)**: Book completion count aggregated by genre. Cached for 1 hour via `user_stats_by_genre_key(user_id)`.
+  - **Zero Stale State**: All three endpoints use `cache.get_or_set` and are automatically purged when library books, reading sessions, or EPUB page counts change.
 
 ---
 
@@ -669,7 +751,7 @@ Whenever any request returns an HTTP status code outside of `2xx`, the response 
 - **Query Parameters**:
   - `q` (string, required): Search query.
   - `type` (string, optional): One of `title` (default), `author`, or `isbn`.
-- **Cache**: 24 hours in Redis.
+- **Cache**: 24 hours in Redis (`google_books:search:{md5(type:query)}`, TTL: 86400s via `apps.core.cache.google_books_search_key`). Returns `"cached": true` on cache hits.
 - **Response**: `200 OK`
   ```json
   {
@@ -949,6 +1031,7 @@ All operations in this section are scoped strictly to the authenticated caller v
 #### 4. Get Goal Progress & Completion Metrics
 - **Endpoint**: `GET /api/v1/goals/progress/`
 - **Auth**: `IsAuthenticated, IsOwner`
+- **Cache**: 1 hour in Redis (`user:{id}:goals:progress`, TTL: 3600s via `TTL_GOALS_PROGRESS`). Lazily computed via `cache.get_or_set` and automatically invalidated when `ReadingGoal`, `UserBook`, or `ReadingSession` records change.
 - **Description**: Calculates live goal completion by aggregating finished UserBooks (for annual books) and ReadingSessions (for monthly pages).
 - **Response**: `200 OK`
   ```json
@@ -978,12 +1061,13 @@ All operations in this section are scoped strictly to the authenticated caller v
 
 ### Reading Statistics & Analytics (`/api/v1/stats/`)
 
-All statistics are scoped exclusively to the authenticated user's reading activity.
+All statistics are scoped exclusively to the authenticated user's reading activity. All three analytics endpoints are cached in Redis with a 1-hour TTL and automatically invalidated on any user reading activity or library changes.
 
 #### 1. Overall Summary
 - **Endpoint**: `GET /api/v1/stats/summary/`
 - **Auth**: `IsAuthenticated`
-- **Description**: Returns aggregate metrics including total finished books, cumulative pages read, favorite genre, and current reading streak.
+- **Cache**: 1 hour in Redis (`user:{id}:stats:summary`, TTL: 3600s via `TTL_STATS_SUMMARY`). Automatically invalidated on `UserBook` or `ReadingSession` changes, and upon EPUB page count calculation.
+- **Description**: Returns aggregate metrics including total finished books, cumulative pages read, favorite genre, and current reading streak in days (calculated based on consecutive reading session dates with a 1-day grace period).
 - **Response**: `200 OK`
   ```json
   {
@@ -997,6 +1081,7 @@ All statistics are scoped exclusively to the authenticated user's reading activi
 #### 2. Progress Grouped By Month
 - **Endpoint**: `GET /api/v1/stats/by-month/`
 - **Auth**: `IsAuthenticated`
+- **Cache**: 1 hour in Redis (`user:{id}:stats:by-month`, TTL: 3600s via `TTL_STATS_BY_MONTH`). Automatically invalidated on `UserBook` or `ReadingSession` changes, and upon EPUB page count calculation.
 - **Description**: Returns time-series data of books completed and pages read grouped by month.
 - **Response**: `200 OK`
   ```json
@@ -1022,6 +1107,7 @@ All statistics are scoped exclusively to the authenticated user's reading activi
 #### 3. Breakdown Grouped By Genre
 - **Endpoint**: `GET /api/v1/stats/by-genre/`
 - **Auth**: `IsAuthenticated`
+- **Cache**: 1 hour in Redis (`user:{id}:stats:by-genre`, TTL: 3600s via `TTL_STATS_BY_GENRE`). Automatically invalidated on `UserBook` or `ReadingSession` changes, and upon EPUB page count calculation.
 - **Description**: Aggregates finished books grouped by genre in descending order.
 - **Response**: `200 OK`
   ```json
@@ -1102,6 +1188,38 @@ Environment variables are loaded via `django-environ` from a root `.env` file.
 | `EMAIL_HOST_USER` | string | `""` | SMTP authentication user. |
 | `EMAIL_HOST_PASSWORD` | string | `""` | SMTP authentication password or app password. |
 | `DEFAULT_FROM_EMAIL` | string | `noreply@cozyreads.app` | Outgoing sender address for system notification emails. |
+
+### Redis Cache Settings & Connection Options
+
+Configured in `config/settings/base.py` under Django's `CACHES["default"]`:
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env("REDIS_URL", default="redis://localhost:6379/1"),
+        "KEY_PREFIX": "cozyreads",
+        "TIMEOUT": 300,
+        "OPTIONS": {
+            "max_connections": 50,
+            "retry_on_timeout": True,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        },
+    }
+}
+```
+
+| Parameter | Configured Value | Description |
+| :--- | :--- | :--- |
+| `BACKEND` | `django.core.cache.backends.redis.RedisCache` | Native Redis engine introduced in Django 4.0+. |
+| `LOCATION` | `REDIS_URL` (DB `1`) | Dedicated cache database (isolating cache keys from Celery broker on DB `0`). |
+| `KEY_PREFIX` | `"cozyreads"` | Namespace prefix applied to all keys in Redis (e.g., `cozyreads:1:user:1:stats:summary`). |
+| `TIMEOUT` | `300` (5 minutes) | Default fallback TTL for unconfigured `cache.set()` calls. |
+| `OPTIONS.max_connections` | `50` | Maximum persistent Redis connection pool size. |
+| `OPTIONS.retry_on_timeout` | `True` | Automatically retries failed commands upon transient socket timeout. |
+| `OPTIONS.socket_connect_timeout` | `5` seconds | Connection establishment timeout limit. |
+| `OPTIONS.socket_timeout` | `5` seconds | Socket read/write operation timeout limit. |
 
 ---
 
@@ -1192,19 +1310,16 @@ During a deep-dive analysis of the codebase, several bugs, edge cases, and high-
 
 ### ⚠️ Identified Bugs & Fixes
 
-#### 1. Runtime `NameError` in `apps/library/views.py` (Line 98)
+#### 1. Runtime `NameError` in `apps/library/views.py` (Line 98) — [RESOLVED]
+- **Status**: ✅ **Resolved** (Fixed in commit `f1133b8`).
 - **Issue**: In `UserBookViewSet.progress`:
   ```python
   if user_book.status == "want_to_read":
       user_book.status = "reading"
       user_book.started_at = user_book.started_at or timezone.now().date()
   ```
-  `timezone` is **not imported** in `apps/library/views.py`. When an authenticated user updates progress on a book currently in `"want_to_read"`, the server crashes with `NameError: name 'timezone' is not defined`. Linting did not catch this because of `# flake8:noqa` at line 1.
-- **Fix**:
-  ```python
-  # In apps/library/views.py
-  from django.utils import timezone
-  ```
+  `timezone` was previously **not imported** in `apps/library/views.py`. When an authenticated user updated progress on a book in `"want_to_read"`, the server crashed with `NameError: name 'timezone' is not defined`.
+- **Resolution**: Added `from django.utils import timezone` to `apps/library/views.py`.
 
 #### 2. Cloud Storage Incompatibility in Celery Task (`apps/epub/tasks.py`)
 - **Issue**: In `parse_epub_pages`:
@@ -1297,24 +1412,9 @@ During a deep-dive analysis of the codebase, several bugs, edge cases, and high-
 
 ### 💡 High-Value Architectural & UX Recommendations
 
-#### 1. Reading Streak Metric Calculation (`apps/stats/views.py`)
-- **Current Behavior**: `_current_streak` calculates consecutive days where a user *finished an entire book* (`finished_at`). Because finishing a whole book every day is unrealistic for most readers, users will almost always see a streak of 0 or 1.
-- **Recommendation**: Base streak calculation on **reading activity** using `ReadingSession` (which logs every time a user reads pages). Calculate consecutive days with at least one `ReadingSession`:
-  ```python
-  session_dates = set(
-      ReadingSession.objects.filter(user_book__user=request.user)
-      .values_list("created_at__date", flat=True)
-  )
-  streak = 0
-  day = timezone.now().date()
-  # Allow streak continuation if read yesterday even if today's session hasn't occurred yet
-  if day not in session_dates and (day - timedelta(days=1)) in session_dates:
-      day -= timedelta(days=1)
-
-  while day in session_dates:
-      streak += 1
-      day -= timedelta(days=1)
-  ```
+#### 1. Reading Streak Metric Calculation (`apps/stats/views.py`) — [IMPLEMENTED]
+- **Status**: ✅ **Implemented** (Implemented in commit `f1133b8`).
+- **Implementation**: The streak calculation was updated in `apps/stats/views.py` to base streaks on consecutive daily `ReadingSession` records (with a 1-day grace period for yesterday's session) instead of requiring an entire book to be completed each day.
 
 #### 2. Automatic Book Completion on Progress Update
 - **Current Behavior**: When `current_page >= book.total_pages`, the book remains in `status = "reading"`.
@@ -1331,3 +1431,11 @@ During a deep-dive analysis of the codebase, several bugs, edge cases, and high-
 #### 4. EPUB File Parsing Status Feedback
 - **Current Behavior**: `upload_epub` returns `202 Accepted`, but the client has no way of knowing whether the background worker succeeded, failed, or is still parsing.
 - **Recommendation**: Add an `epub_status` field on `UserBook` (`choices=["pending", "ready", "failed"]`) so frontend clients can display a progress spinner and know if an uploaded file was corrupt.
+
+#### 5. Caching & Invalidation for Analytics & Goals — [IMPLEMENTED]
+- **Status**: ✅ **Implemented** (Implemented in commits `309ff30`, `d85a0bb`, and `6cb96c3`).
+- **Implementation**:
+  - Implemented centralized caching via `apps.core.cache` with 1-hour TTLs on `/api/v1/stats/summary/`, `/api/v1/stats/by-month/`, `/api/v1/stats/by-genre/`, and `/api/v1/goals/progress/`.
+  - Configured Redis connection pooling (`max_connections=50`), timeout resilience (5s), and `"cozyreads"` namespace prefix in `config/settings/base.py`.
+  - Added signal handlers in `apps.library.signals` and `apps.goals.signals` to automatically invalidate cached user statistics and goal progress on `post_save` and `post_delete` events for `UserBook`, `ReadingSession`, and `ReadingGoal`.
+  - Celery background worker (`parse_epub_pages`) automatically invalidates cached statistics for all users with that book upon calculating total pages.
