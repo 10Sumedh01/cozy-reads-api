@@ -71,8 +71,8 @@ flowchart TD
     end
 
     subgraph DataStorage["Data & State Layer"]
-        Postgres[(PostgreSQL 16\nRelational Storage)]
-        Redis[(Redis 7\nCache DB 1 | Broker DB 0)]
+        Postgres[("PostgreSQL 16\nRelational Storage")]
+        Redis[("Redis 7\nCache DB 1 | Broker DB 0")]
         MediaStorage[("Media Storage\nLocal Media / AWS S3")]
     end
 
@@ -92,13 +92,13 @@ flowchart TD
     Serializers --> ORM
     ORM -->|TCP / Port 5432| Postgres
 
-    Views -->|Cache Read / Write (DB 1)| Redis
-    Views -->|Enqueue Task (DB 0)| Redis
+    Views -->|"Cache Read / Write (DB 1)"| Redis
+    Views -->|"Enqueue Task (DB 0)"| Redis
     Redis -->|Consume Task| CeleryWorker
     CeleryBeat -->|Schedule Heartbeat| Redis
     CeleryWorker -->|Update Total Pages| Postgres
     CeleryWorker -->|Read EPUB File| MediaStorage
-    CeleryWorker -->|Invalidate User Stats Cache (DB 1)| Redis
+    CeleryWorker -->|"Invalidate User Stats Cache (DB 1)"| Redis
 
     Views -->|File Uploads / Avatars| MediaStorage
     Views -->|Volume Search Proxy| GoogleBooks
@@ -1410,10 +1410,10 @@ During a deep-dive analysis of the codebase, several bugs, edge cases, and high-
 
 ---
 
-### 💡 High-Value Architectural & UX Recommendations
+###  High-Value Architectural & UX Recommendations
 
 #### 1. Reading Streak Metric Calculation (`apps/stats/views.py`) — [IMPLEMENTED]
-- **Status**: ✅ **Implemented** (Implemented in commit `f1133b8`).
+- **Status**:  **Implemented** (Implemented in commit `f1133b8`).
 - **Implementation**: The streak calculation was updated in `apps/stats/views.py` to base streaks on consecutive daily `ReadingSession` records (with a 1-day grace period for yesterday's session) instead of requiring an entire book to be completed each day.
 
 #### 2. Automatic Book Completion on Progress Update
@@ -1433,7 +1433,7 @@ During a deep-dive analysis of the codebase, several bugs, edge cases, and high-
 - **Recommendation**: Add an `epub_status` field on `UserBook` (`choices=["pending", "ready", "failed"]`) so frontend clients can display a progress spinner and know if an uploaded file was corrupt.
 
 #### 5. Caching & Invalidation for Analytics & Goals — [IMPLEMENTED]
-- **Status**: ✅ **Implemented** (Implemented in commits `309ff30`, `d85a0bb`, and `6cb96c3`).
+- **Status**:  **Implemented** (Implemented in commits `309ff30`, `d85a0bb`, and `6cb96c3`).
 - **Implementation**:
   - Implemented centralized caching via `apps.core.cache` with 1-hour TTLs on `/api/v1/stats/summary/`, `/api/v1/stats/by-month/`, `/api/v1/stats/by-genre/`, and `/api/v1/goals/progress/`.
   - Configured Redis connection pooling (`max_connections=50`), timeout resilience (5s), and `"cozyreads"` namespace prefix in `config/settings/base.py`.
